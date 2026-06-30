@@ -437,10 +437,9 @@ was zero or empty," never "we didn't capture it."
 
 ## Delivery
 
-NRAL is delivered through the Enterprise Observability
-delivery infrastructure that powers your CDA request-log
-exports. The destination types, credentials model, and 
-authentication flow are identical to other EO options;
+The NRAL logs we create are pushed through the [Enterprise Observability](https://www.contentful.com/developers/docs/concepts/enterprise-observability/) 
+log delivery feature. The configuration, destination types, credentials model, and 
+authentication flow are identical to other EO log options;
 
 What you do need is an **NRAL-specific delivery configuration** alongside
 your existing Observability ones. Audit logs are treated as their own log type, so
