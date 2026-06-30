@@ -31,10 +31,15 @@ supports OCSF.
 ## What you get
 
 - **One OCSF event per API request** against the Contentful Management API
-  (CMA) for your organization.
-- **Near real-time latency.** Events typically reach your delivery
-  destination within minutes of the originating request, subject to your
-  destination's own ingest latency.
+  (CMA) for your organization, including **read requests** (`GET`). The legacy Daily Audit Log batch
+  export did not include reads; NRAL does.
+- **Near real-time latency.** Events are targeted to reach your delivery
+  destination within **5 minutes** of the originating request, subject to
+  your destination's own ingest latency.
+- **Authorization token included (redacted).** The authorization token
+  from the request is captured in a redacted form, so you can correlate
+  activity back to a specific token without exposing the token value
+  itself.
 - **Stable OCSF contract** for the fields covered in
   [Field reference](#field-reference).
 
@@ -147,7 +152,7 @@ listed are reserved by OCSF and not currently populated.
 | `class_uid` | Constant `6003` (API Activity). |
 | `class_name` | Constant `"API Activity"`. |
 | `category_uid` | Constant `6` (Application Activity). |
-| `activity_id` | HTTP-method derived: `GET`/`HEAD`→2 (Read), `POST`→1 (Create), `PUT`/`PATCH`→3 (Update), `DELETE`→4 (Delete), other verbs→99 (Other), missing→0 (Unknown). |
+| `activity_id` | HTTP-method derived: `GET`→2 (Read), `POST`→1 (Create), `PUT`/`PATCH`→3 (Update), `DELETE`→4 (Delete), other verbs→99 (Other), missing→0 (Unknown). |
 | `activity_name` | OCSF-spec name corresponding to `activity_id`. |
 | `type_uid` | `class_uid * 100 + activity_id`. |
 | `severity_id` | Constant `1` (Informational). See [General conventions](#general-conventions). |
@@ -297,6 +302,13 @@ breaking shape changes. Re-validate your SIEM ingest rules against it.
 > timestamps, and only OCSF-defined Actor attributes (`user`, `app_uid`,
 > `invoked_by`). If your existing parsers tolerate or rely on the
 > non-standard shapes, expect to tighten them up when adopting NRAL.
+
+### Coverage
+
+| | Daily batch export | NRAL |
+|---|---|---|
+| Read requests (`GET`) | not included | **included** |
+| Authorization token | not included | included (redacted) |
 
 ### File format
 
