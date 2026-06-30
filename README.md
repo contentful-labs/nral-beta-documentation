@@ -19,13 +19,13 @@ supports OCSF.
 ## Contents
 
 - [What you get](#what-you-get)
-- [Delivery](#delivery)
 - [Event shape](#event-shape)
 - [Sample event](#sample-event)
 - [Field reference](#field-reference)
 - [General conventions](#general-conventions)
 - [Experimental: enrichment events](#experimental-enrichment-events)
 - [Differences vs. the Daily Audit Log batch export](#differences-vs-the-daily-audit-log-batch-export)
+- [Delivery](#delivery)
 - [Known limitations](#known-limitations)
 
 ## What you get
@@ -35,24 +35,8 @@ supports OCSF.
 - **Near real-time latency.** Events typically reach your delivery
   destination within minutes of the originating request, subject to your
   destination's own ingest latency.
-- **Stable OCSF 1.3.0 contract** for the fields covered in
+- **Stable OCSF contract** for the fields covered in
   [Field reference](#field-reference).
-
-## Delivery
-
-NRAL is delivered through the same **Enterprise Observability (EO)**
-delivery infrastructure that powers your CDA and GraphQL access-log
-exports (S3, GCS, Azure Blob, or DataDog). The destination types,
-credentials model, and authentication flow are identical to EO; you do
-not need a new integration on your side.
-
-What you do need is an **NRAL-specific delivery configuration** alongside
-your existing EO ones. Audit logs are treated as their own log type, so
-each destination you want them sent to has to be opted in explicitly
-(this is what lets you route audit logs to a different bucket / index /
-account from your access logs if you want to, and lets you turn audit
-delivery on or off independently). Ask your Contentful contact to set up
-the NRAL configuration for the destinations you want.
 
 ## Event shape
 
@@ -455,6 +439,22 @@ request ID), switch the join key to **`metadata.correlation_uid`** in NRAL.
 
 A serialized `0` or `""` in NRAL always means "the upstream value really
 was zero or empty," never "we didn't capture it."
+
+## Delivery
+
+NRAL is delivered through the Enterprise Observability
+delivery infrastructure that powers your CDA request-log
+exports. The destination types, credentials model, and 
+authentication flow are identical to other EO options;
+
+What you do need is an **NRAL-specific delivery configuration** alongside
+your existing Observability ones. Audit logs are treated as their own log type, so
+each destination you want them sent to has to be opted in explicitly
+(this is what lets you route audit logs to a different bucket / index /
+account from your access logs if you want to, and lets you turn audit
+delivery on or off independently). Ask your Contentful contact to set up
+the NRAL configuration for the destinations you want.
+
 
 ## Known limitations
 
