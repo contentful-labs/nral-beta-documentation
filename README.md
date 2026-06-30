@@ -327,7 +327,7 @@ API Activity event by `metadata.correlation_uid`:
 
 To attach this enrichment to its originating request, look up the
 `API Activity` event with the same `metadata.correlation_uid`
-(`999aa5aa-45b4-4a11-a08c-c1e9f2a472af` in this example).
+(`666aa5aa-45b4-4a11-a08c-c1e9f2a472af` in this example).
 
 > [!NOTE]
 > **Possible future change:** we are evaluating folding the enrichment
