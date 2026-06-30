@@ -267,13 +267,8 @@ Because this path is still evolving, expect:
 - Field names under `web_resources[].data` (e.g. `type`, `type_version`,
   `provider`, `action`, `entities`, `created_time`) to potentially be
   renamed or restructured.
-- Some enrichment events to be emitted without a matching downstream
-  use case yet; they are safe to ignore until the contract is finalised.
-- Coverage to expand beyond AI Actions and Bulk Actions over time.
-
-If you want to opt out of receiving experimental enrichment events while
-you build your initial integration, let your Contentful contact know; the
-two event classes are separable at the source.
+- Emitting of events to be interrupted and resumed at arbitrary points in time
+- Enrichments might show up within the API Activity event at some phase (as detailed below)
 
 > [!NOTE]
 > **Possible future change:** we are evaluating folding the enrichment
@@ -329,7 +324,7 @@ document.
 The move from `Web Resources Activity` to `API Activity` reflects what the
 event actually represents (a Contentful Management API request) and lets us
 reserve `Web Resources Activity` for [enrichment events](#experimental-enrichment-events)
-that describe touched resources separately.
+that describe touched resources separately (like in case of bulk actions).
 
 ### `time`
 
@@ -369,7 +364,7 @@ NRAL today identifies actors but does **not** expand them. The
 `API Activity` event carries the actor identifier (`actor.user.uid` for
 users, `actor.app_uid` for apps) and, when applicable, the delegated
 actor (`actor.invoked_by`); it does not yet inline the user's email or
-full name as the batch export does. Expanded actor details are planned for
+name as the batch export does. Expanded actor details are planned for
 a future release before general availability (see
 [Known limitations](#known-limitations)). In the meantime, if your
 downstream needs the user's email or display name, resolve it from
