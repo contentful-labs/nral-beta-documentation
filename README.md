@@ -275,6 +275,60 @@ Because this path is still evolving, expect:
 - Emitting of events to be interrupted and resumed at arbitrary points in time
 - Enrichments might show up within the API Activity event at some phase (as detailed below)
 
+### Sample enrichment event
+
+A Bulk Action enrichment correlated to a `POST /spaces/.../bulk_actions/validate`
+API Activity event by `metadata.correlation_uid`:
+
+```json
+{
+  "class_uid": 6001,
+  "activity_id": 1,
+  "activity_name": "Create",
+  "class_name": "Web Resource Activity",
+  "category_uid": 6,
+  "type_uid": 600101,
+  "severity_id": 1,
+  "status_id": 0,
+  "time": 1742567250576,
+  "metadata": {
+    "version": "1.3.0",
+    "uid": "333ab88c-fd5e-49bb-9f66-c78d4f9cf11e",
+    "correlation_uid": "666aa5aa-45b4-4a11-a08c-c1e9f2a472af",
+    "tenant_uid": "9pZnXrhl2Z8TxyuLODXxKH",
+    "log_name": "cma-api-audit-log",
+    "product": {
+      "name": "Content Management API",
+      "vendor_name": "Contentful"
+    }
+  },
+  "web_resources": [
+    {
+      "uid": "c907a09a-c473-412e-aa85-f688c7f639dd",
+      "name": "BulkActionEnrichment",
+      "data": {
+        "type": "BulkActionEnrichment",
+        "type_version": "1.0.0",
+        "provider": "666aa5aa-45b4-4a11-a08c-c1e9f2a472af/enrichment/c907a09a-c473-412e-aa85-f688c7f639dd",
+        "created_time": "2026-06-25T06:00:50.576Z",
+        "action": "validate",
+        "entities": [
+          { "sys": { "type": "Link", "linkType": "Asset", "id": "4xQRm9JXabcMNpL3k2qpBN" } },
+          { "sys": { "type": "Link", "linkType": "Entry", "id": "2DZbgdJotvvshpFnnXLZtb" } },
+          { "sys": { "type": "Link", "linkType": "Entry", "id": "2A4YqxSczTdhlX3SSZgpqg" } },
+          { "sys": { "type": "Link", "linkType": "Entry", "id": "7fCVLCDShH7E4eJz6gt6uY" } },
+          { "sys": { "type": "Link", "linkType": "Entry", "id": "3LsxOg93KRFeVdhHLGhUdI" } }
+        ]
+      }
+    }
+  ]
+}
+```
+
+To attach this enrichment to its originating request, look up the
+`API Activity` event with the same `metadata.correlation_uid`
+(`666aa5aa-45b4-4a11-a08c-c1e9f2a472af` in this example).
+
 > [!NOTE]
 > **Possible future change:** we are evaluating folding the enrichment
 > payload directly into the originating `API Activity` event (likely under
