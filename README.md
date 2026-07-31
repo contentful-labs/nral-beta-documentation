@@ -2,8 +2,7 @@
 
 > [!IMPORTANT]
 > This feature is in **early release**. The event contract described below is
-> stable for the fields listed, but additional fields may be added over time
-> and a small number of known gaps remain (see [Known Limitations](#known-limitations)).
+> stable for the fields listed, but additional fields may be added over time.
 > Reach out to your Contentful contact to be onboarded.
 
 Near Real-Time Audit Logs (NRAL) deliver a stream of audit events describing
@@ -42,6 +41,8 @@ supports OCSF.
   itself.
 - **Stable OCSF contract** for the fields covered in
   [Field reference](#field-reference).
+- **At-least-once delivery.** Individual events may be duplicated in the
+  feed. See [Delivery](#delivery) for deduplication guidance.
 
 ## Event shape
 
@@ -95,7 +96,9 @@ A `PUT` to an entry endpoint by an authenticated user:
     "user": {
       "uid": "5xUser1234abcd",
       "type": "User",
-      "type_id": 1
+      "type_id": 1,
+      "email_addr": "jane.doe@example.com",
+      "full_name": "Jane Doe"
     }
   },
   "metadata": {
@@ -159,7 +162,7 @@ listed are reserved by OCSF and not currently populated.
 | `status_id` | `1` (Success) when HTTP status is in `[200, 400)`; `2` (Failure) for any other parsed status; `0` (Unknown) if missing. |
 | `time` | Epoch milliseconds of the request. `0` if upstream timestamp was missing. |
 | `duration` | Server-side request duration, milliseconds. Omitted when unknown. |
-| `actor.user` | Present for authenticated human-user requests. `uid` is the Contentful user ID; `type_id=1`, `type="User"`. **Identifier only** in the early release (no email or full name; see [Known limitations](#known-limitations)). |
+| `actor.user` | Present for authenticated human-user requests. `uid` is the Contentful user ID; `type_id=1`, `type="User"`. When available, `email_addr` and `full_name` are populated by looking up the user in Contentful's users directory. Missing profile fields (unknown UID, deleted user, or a transient lookup error) are omitted rather than zero-filled. |
 | `actor.app_uid` | Present when the actor is a Contentful App installation (rather than a user). Identifier only. |
 | `actor.invoked_by` | Present when the request was made on behalf of an app via the `X-Contentful-Delegated-Actor-Id` header. Always an `app:...` identifier. |
 | `metadata.version` | Constant `"1.3.0"` (OCSF schema version). |
@@ -197,7 +200,14 @@ early-release period:
   do not get conflated with security incidents.
 - **Anonymous / unauthenticated requests omit the `actor` object entirely.**
   Absence means "no identity captured"; there is no canonical
-  anonymous-actor encoding.
+  anonymous-actor encoding. NRAL captures every incoming request that
+  reaches the Contentful Management API surface, from all clients, not
+  only the Contentful web app or official SDKs. The feed can therefore
+  include requests to endpoints that are not part of the public CMA
+  contract, malformed requests, or requests from misbehaving or malicious
+  clients. For such requests, actor resolution may not also complete and the
+  `actor` object can be absent. The event itself is still real; do not treat "missing
+  actor" as "event is invalid".
 - **`metadata.uid` and `metadata.correlation_uid` are distinct.** `uid` is a
   random per-event UUID (the OCSF event-instance identifier). To join an
   audit event with other logs for the same request, use `correlation_uid`
@@ -225,16 +235,23 @@ early-release period:
 - **Unknown enum values use OCSF-defined sentinels.** `activity_id=0`
   ("Unknown") and `99` ("Other") follow the OCSF spec; we never invent
   custom enum integers.
+- **Actor profile fields are best-effort.** `actor.user.email_addr` and
+  `actor.user.full_name` are resolved from the user's Contentful profile
+  at emit time. If the user cannot be resolved (deleted account, transient
+  lookup failure), the profile fields are omitted while `actor.user.uid`
+  remains authoritative. Do not treat their absence as "anonymous"; use
+  the presence of `actor.user.uid` as the identity signal.
 
 ## Experimental: enrichment events
 
 > [!WARNING]
-> **Experimental, subject to change during early release.** Most of the
-> implementation is in place, but the event shape, field names, and the set
-> of correlations described below may change before this becomes a stable
-> part of the contract. We may add, rename, or restructure fields without
-> notice while the feature is in this phase. Build optional handling on top
-> of it; do not yet make production SIEM rules depend on its exact shape.
+> **Experimental, subject to change during early release.** The pipeline is
+> in place and events are flowing end-to-end, but the event shape, field
+> names under `web_resources[].data`, and whether enrichments are delivered
+> as a separate event (as documented here) or folded into the originating
+> `API Activity` event may still change before general availability. Build
+> optional handling on top of it; do not yet make production SIEM rules
+> depend on its exact shape.
 
 In addition to the `API Activity` events described above, you may begin to
 see a second class of OCSF events on the same feed:
@@ -259,6 +276,13 @@ see a second class of OCSF events on the same feed:
   `"Web Resources Activity"` is the experimental enrichment event. Both
   classes share `metadata.tenant_uid` (your organization ID) and the same
   partition layout on disk.
+- **Actor location differs by event class.** On `API Activity` (6003)
+  events, the actor is at the top-level `actor` field. On
+  `Web Resources Activity` (6001) enrichment events, OCSF 1.3.0 does not
+  define an `actor` attribute (see the
+  [class schema](https://schema.ocsf.io/1.3.0/classes/web_resources_activity)),
+  so we place it under `unmapped.actor` instead. Parsing logic that reads
+  the actor must handle both locations.
 
 > [!NOTE]
 > **You can filter or drop enrichment events at parse time** by matching on
@@ -272,7 +296,6 @@ Because this path is still evolving, expect:
 - Field names under `web_resources[].data` (e.g. `type`, `type_version`,
   `provider`, `action`, `entities`, `created_time`) to potentially be
   renamed or restructured.
-- Emitting of events to be interrupted and resumed at arbitrary points in time
 - Enrichments might show up within the API Activity event at some phase (as detailed below)
 
 ### Sample enrichment event
@@ -285,7 +308,7 @@ API Activity event by `metadata.correlation_uid`:
   "class_uid": 6001,
   "activity_id": 1,
   "activity_name": "Create",
-  "class_name": "Web Resource Activity",
+  "class_name": "Web Resources Activity",
   "category_uid": 6,
   "type_uid": 600101,
   "severity_id": 1,
@@ -300,6 +323,17 @@ API Activity event by `metadata.correlation_uid`:
     "product": {
       "name": "Content Management API",
       "vendor_name": "Contentful"
+    }
+  },
+  "unmapped": {
+    "actor": {
+      "user": {
+        "uid": "5xUser1234abcd",
+        "type": "User",
+        "type_id": 1,
+        "email_addr": "jane.doe@example.com",
+        "full_name": "Jane Doe"
+      }
     }
   },
   "web_resources": [
@@ -421,20 +455,17 @@ Audit logs are an event stream, not a security signal. See
 | | Daily batch export | NRAL |
 |---|---|---|
 | Deprecated `actor.id` / `actor.type` | present (kept for backwards compatibility) | **not emitted** (these fields are deprecated in OCSF; use `actor.user.uid` / `actor.user.type`) |
-| `actor.user` for human users | `{type: "User", type_id: 2, uid, email_addr, full_name}` (identifier **and** full profile) | `{type: "User", type_id: 1, uid}` (identifier only; full profile not yet expanded) |
+| `actor.user` for human users | `{type: "User", type_id: 2, uid, email_addr, full_name}` (identifier **and** full profile) | `{type: "User", type_id: 1, uid, email_addr, full_name}` (email and full name populated when available; `type_id` differs from batch export's `2`) |
 | Apps | `actor.user = {type: "App", type_id: 3, uid}` | `actor.app_uid = "<id>"` (no `actor.user`) |
 | Delegated actor (app on behalf of user) | not represented | `actor.invoked_by = "app:<id>"` |
 | Anonymous / unauthenticated | actor object with `type: "Unknown"` | `actor` object **omitted entirely** |
 
-NRAL today identifies actors but does **not** expand them. The
-`API Activity` event carries the actor identifier (`actor.user.uid` for
-users, `actor.app_uid` for apps) and, when applicable, the delegated
-actor (`actor.invoked_by`); it does not yet inline the user's email or
-name as the batch export does. Expanded actor details are planned for
-a future release before general availability (see
-[Known limitations](#known-limitations)). In the meantime, if your
-downstream needs the user's email or display name, resolve it from
-`actor.user.uid` via the Contentful Users API.
+NRAL identifies actors by ID (`actor.user.uid` for users, `actor.app_uid`
+for apps) and, when applicable, the delegated actor (`actor.invoked_by`).
+For human users, `email_addr` and `full_name` are also populated from
+Contentful's users directory, matching the batch export's profile
+information. Note the `type_id` mismatch: NRAL uses OCSF's canonical
+`type_id = 1` for `"User"`; the batch export historically emits `2`.
 
 ### `enrichments` and `web_resources`
 
@@ -503,6 +534,22 @@ was zero or empty," never "we didn't capture it."
 
 ## Delivery
 
+### Delivery guarantees
+
+NRAL follows the same **at-least-once, best-effort** delivery semantics as
+the rest of Enterprise Observability (see the
+[EO delivery documentation](https://www.contentful.com/developers/docs/concepts/enterprise-observability/#receiving-duplicate-events)).
+Consumers should expect and tolerate duplicates:
+
+- **Deduplicate on `metadata.correlation_uid`.** It is stable per originating
+  request; two events carrying the same `correlation_uid` describe the same
+  underlying call.
+- **`metadata.uid` is not a deduplication key.** It is a fresh UUID per
+  emitted event, so a duplicated request produces two distinct `metadata.uid`
+  values.
+
+### Destinations
+
 The NRAL logs we create are pushed through the [Enterprise Observability](https://www.contentful.com/developers/docs/concepts/enterprise-observability/) 
 log delivery feature. The configuration, destination types, credentials model, and 
 authentication flow are identical to other EO log options;
@@ -528,13 +575,6 @@ the NRAL configuration for the destinations you want.
   details to the originating request.
 - **CMA-only at launch.** The early-release feed covers the Contentful
   Management API only.
-- **Actor identifier only, no profile details yet.** In the current early
-  release, `actor.user` carries the user ID only; email address and full
-  name are **not** included (the legacy Daily Audit Log batch export does
-  expose these; see [Differences vs. the Daily Audit Log batch export](#differences-vs-the-daily-audit-log-batch-export)).
-  We aim to provide full actor information in a future release before
-  general availability. If you need email or display name today, look the
-  user up via the Contentful Users API by `actor.user.uid`.
 - **Some `api.operation` values may be empty.** When upstream routing does
   not set a route template, the entire `api` object is dropped from the
   event. Affected endpoints are being closed out during the early-release
