@@ -22,7 +22,7 @@ supports OCSF.
 - [Sample event](#sample-event)
 - [Field reference](#field-reference)
 - [General conventions](#general-conventions)
-- [Experimental: enrichment events](#experimental-enrichment-events)
+- [Enrichments](#enrichments)
 - [Differences vs. the Daily Audit Log batch export](#differences-vs-the-daily-audit-log-batch-export)
 - [Delivery](#delivery)
 - [Known limitations](#known-limitations)
@@ -36,9 +36,9 @@ supports OCSF.
   destination within **5 minutes** of the originating request, subject to
   your destination's own ingest latency.
 - **Authorization token included (redacted).** The authorization token
-  from the request is captured in a redacted form, so you can correlate
-  activity back to a specific token without exposing the token value
-  itself.
+  from the request is captured in a redacted form as the `authorization`
+  entry in `http_request.http_headers[]`, so you can correlate activity
+  back to a specific token without exposing the token value itself.
 - **Stable OCSF contract** for the fields covered in
   [Field reference](#field-reference).
 - **At-least-once delivery.** Individual events may be duplicated in the
@@ -51,17 +51,18 @@ Each delivered object is a gzip-compressed NDJSON file
 organization and event date (UTC); the exact key layout your destination
 sees is described in your EO delivery onboarding guide.
 
-The feed may contain more than one OCSF event class (see
-[Experimental: enrichment events](#experimental-enrichment-events)).
-Consumers should dispatch on `class_uid` / `class_name` to identify each
-event, not on file path or `metadata.product`.
+Every event on the feed is the same OCSF class, `API Activity`
+(`class_uid = 6003`). Requests that produce additional context carry it on that
+same event rather than on an event of their own (see [Enrichments](#enrichments)).
+Dispatch on `class_uid` / `class_name` rather than on file path or
+`metadata.product`, so that any class added later is additive for your parser.
 
 | Field | Value |
 |---|---|
 | Format | NDJSON, gzipped |
 | Encoding | UTF-8 |
 | OCSF version | `1.3.0` (`metadata.version`) |
-| Initial event class | `API Activity` (`class_uid = 6003`) |
+| Event class | `API Activity` (`class_uid = 6003`) |
 | Timestamps | Epoch milliseconds (`Timestamp_t`), UTC |
 
 > [!NOTE]
@@ -104,15 +105,16 @@ A `PUT` to an entry endpoint by an authenticated user:
   "metadata": {
     "version": "1.3.0",
     "uid": "9f1e7a4c-5b3d-4d2e-a8f1-2c6e9a1b4d3f",
-    "correlation_uid": "req-7c4e2a1f-8b3d-4a9e-bc12-3456789abcde",
+    "correlation_uid": "7c4e2a1f-8b3d-4a9e-bc12-3456789abcde",
     "tenant_uid": "0XYZ123orgabc",
+    "log_name": "cma-api-audit-log",
     "product": {
       "name": "Content Management API",
       "vendor_name": "Contentful"
     }
   },
   "api": {
-    "operation": "/spaces/:space_id/environments/:env/entries/:entry_id"
+    "operation": "/spaces/:spaceId/environments/:environmentId/entries/:entryId"
   },
   "resources": [
     { "uid": "abc123space", "type": "space" },
@@ -120,7 +122,7 @@ A `PUT` to an entry endpoint by an authenticated user:
     { "uid": "entry42xyz", "type": "entity" }
   ],
   "http_request": {
-    "uid": "req-7c4e2a1f-8b3d-4a9e-bc12-3456789abcde",
+    "uid": "7c4e2a1f-8b3d-4a9e-bc12-3456789abcde",
     "http_method": "PUT",
     "referrer": "https://app.contentful.com/spaces/abc123space/entries",
     "user_agent": "contentful.js/10.4.2 (Node.js/v20.10.0)",
@@ -131,7 +133,8 @@ A `PUT` to an entry endpoint by an authenticated user:
     },
     "http_headers": [
       { "name": "x-contentful-user-agent", "value": "app contentful.js/10.4.2; platform Node.js/v20.10.0;" },
-      { "name": "origin", "value": "https://app.contentful.com" }
+      { "name": "origin", "value": "https://app.contentful.com" },
+      { "name": "authorization", "value": "CFPA[REDACTED]x7Qz" }
     ]
   },
   "http_response": {
@@ -139,7 +142,7 @@ A `PUT` to an entry endpoint by an authenticated user:
     "length": 2048,
     "latency": 142,
     "http_headers": [
-      { "name": "x-cache", "value": "MISS" }
+      { "name": "x-cache", "value": "PASS" }
     ]
   }
 }
@@ -155,33 +158,35 @@ listed are reserved by OCSF and not currently populated.
 | `class_uid` | Constant `6003` (API Activity). |
 | `class_name` | Constant `"API Activity"`. |
 | `category_uid` | Constant `6` (Application Activity). |
-| `activity_id` | HTTP-method derived: `GET`→2 (Read), `POST`→1 (Create), `PUT`/`PATCH`→3 (Update), `DELETE`→4 (Delete), other verbs→99 (Other), missing→0 (Unknown). |
+| `activity_id` | HTTP-method derived: `GET`/`HEAD`→2 (Read), `POST`→1 (Create), `PUT`/`PATCH`→3 (Update), `DELETE`→4 (Delete), other verbs→99 (Other), missing→0 (Unknown). |
 | `activity_name` | OCSF-spec name corresponding to `activity_id`. |
 | `type_uid` | `class_uid * 100 + activity_id`. |
 | `severity_id` | Constant `1` (Informational). See [General conventions](#general-conventions). |
 | `status_id` | `1` (Success) when HTTP status is in `[200, 400)`; `2` (Failure) for any other parsed status; `0` (Unknown) if missing. |
 | `time` | Epoch milliseconds of the request. `0` if upstream timestamp was missing. |
 | `duration` | Server-side request duration, milliseconds. Omitted when unknown. |
-| `actor.user` | Present for authenticated human-user requests. `uid` is the Contentful user ID; `type_id=1`, `type="User"`. When available, `email_addr` and `full_name` are populated by looking up the user in Contentful's users directory. Missing profile fields (unknown UID, deleted user, or a transient lookup error) are omitted rather than zero-filled. |
+| `actor.user` | Present for authenticated human-user requests. `uid` is the Contentful user ID and the field to identify the actor by; `type_id=1`, `type="User"`. `email_addr` and `full_name` carry the user's profile as it stood when the event was emitted, and are omitted rather than zero-filled if unavailable. See [General conventions](#general-conventions). |
 | `actor.app_uid` | Present when the actor is a Contentful App installation (rather than a user). Identifier only. |
 | `actor.invoked_by` | Present when the request was made on behalf of an app via the `X-Contentful-Delegated-Actor-Id` header. Always an `app:...` identifier. |
 | `metadata.version` | Constant `"1.3.0"` (OCSF schema version). |
 | `metadata.uid` | Random UUID generated per event (the OCSF event-instance identifier). Unique to this delivery. |
 | `metadata.correlation_uid` | The upstream `request_id`. Use to join this event with other logs (application logs, traces) for the same request. |
 | `metadata.tenant_uid` | Your Contentful organization ID. |
+| `metadata.log_name` | Constant `"cma-api-audit-log"`. Identifies which Contentful log produced the event. |
 | `metadata.product` | Constant `{name: "Content Management API", vendor_name: "Contentful"}`. |
-| `api.operation` | Route template of the API endpoint, e.g. `/spaces/:space_id/entries/:entry_id`. Treat as an opaque string for grouping. |
+| `api.operation` | Route template of the API endpoint, e.g. `/spaces/:spaceId/entries/:entryId`. Placeholder naming can vary in form across the full Contentful API, so treat the value as an opaque string for grouping rather than parsing it. |
 | `resources[]` | Up to three entries identifying objects acted on: `{uid, type}` where `type` is one of `space`, `environment`, `entity`. Omitted entirely for non-space-scoped calls (organization- or user-level endpoints). |
+| `enrichments[]` | Extra context that the HTTP layer alone cannot express, currently for bulk actions and AI action invocations. Present only on requests that produce it, so most events omit it. See [Enrichments](#enrichments). |
 | `http_request.uid` | Same value as `metadata.correlation_uid`. |
 | `http_request.http_method` | Raw HTTP method. |
 | `http_request.url` | `{hostname, path, query_string}`. `path` is the resolved URL path (with concrete IDs), not the route template; the template lives in `api.operation`. |
 | `http_request.referrer` | HTTP `Referer` header (note OCSF spelling). |
 | `http_request.user_agent` | HTTP `User-Agent` header. |
-| `http_request.http_headers[]` | A small set of captured request headers (currently `x-contentful-user-agent` and `origin`). List is omitted entirely when empty. |
+| `http_request.http_headers[]` | A small set of captured request headers: `x-contentful-user-agent`, `origin`, and `authorization`. The `authorization` value is redacted, keeping only a short prefix and suffix around a `[REDACTED]` marker, which is enough to recognise the same token across events without exposing it. Individual entries are omitted when the header was absent, and the list is omitted entirely when none were present. |
 | `http_response.code` | HTTP status code. Omitted if unknown. |
 | `http_response.length` | Response body size in bytes. Omitted if unknown. |
 | `http_response.latency` | Same value as top-level `duration`, milliseconds. |
-| `http_response.http_headers[]` | Currently exposes `x-cache` (edge cache status, e.g. `HIT`, `MISS`). Omitted when empty. |
+| `http_response.http_headers[]` | Currently exposes `x-cache` (edge cache status). The Content Management API is not cacheable, so in practice this is always `PASS`. Omitted when empty. |
 
 ## General conventions
 
@@ -205,7 +210,7 @@ early-release period:
   only the Contentful web app or official SDKs. The feed can therefore
   include requests to endpoints that are not part of the public CMA
   contract, malformed requests, or requests from misbehaving or malicious
-  clients. For such requests, actor resolution may not also complete and the
+  clients. For such requests an actor often cannot be identified, so the
   `actor` object can be absent. The event itself is still real; do not treat "missing
   actor" as "event is invalid".
 - **`metadata.uid` and `metadata.correlation_uid` are distinct.** `uid` is a
@@ -235,143 +240,194 @@ early-release period:
 - **Unknown enum values use OCSF-defined sentinels.** `activity_id=0`
   ("Unknown") and `99` ("Other") follow the OCSF spec; we never invent
   custom enum integers.
-- **Actor profile fields are best-effort.** `actor.user.email_addr` and
-  `actor.user.full_name` are resolved from the user's Contentful profile
-  at emit time. If the user cannot be resolved (deleted account, transient
-  lookup failure), the profile fields are omitted while `actor.user.uid`
-  remains authoritative. Do not treat their absence as "anonymous"; use
-  the presence of `actor.user.uid` as the identity signal.
+- **Identify actors by `actor.user.uid`.** It is the stable identifier for a
+  user and the right key for correlation, grouping and detection rules.
+  `email_addr` and `full_name` are profile attributes attached to the event as
+  they stood when it was emitted, and they are there for authenticated user
+  requests barring a transient issue. Because they are a point-in-time snapshot,
+  a profile that was just changed can take a short while to come through, so
+  events for the same user may carry differing values before converging on the
+  current profile.
 
-## Experimental: enrichment events
+## Enrichments
 
-> [!WARNING]
-> **Experimental, subject to change during early release.** The pipeline is
-> in place and events are flowing end-to-end, but the event shape, field
-> names under `web_resources[].data`, and whether enrichments are delivered
-> as a separate event (as documented here) or folded into the originating
-> `API Activity` event may still change before general availability. Build
-> optional handling on top of it; do not yet make production SIEM rules
-> depend on its exact shape.
+Some Contentful Management API requests carry information that the HTTP layer
+alone cannot express. A bulk action names every entity it addressed in its
+request body, and an AI action invocation records which model produced which
+output. That context is delivered on the same `API Activity` event as the
+request itself, in OCSF's standard
+[`enrichments`](https://schema.ocsf.io/1.3.0/objects/enrichment) array. There is
+no separate event to correlate and nothing extra to join.
 
-In addition to the `API Activity` events described above, you may begin to
-see a second class of OCSF events on the same feed:
+Two kinds are populated today:
 
-- **Event class:** `Web Resources Activity` (`class_uid = 6001`,
-  `class_name = "Web Resources Activity"`).
-- **Purpose:** carry **extra context** that the originating CMA request
-  could not surface inline. Two such contexts are wired today:
-  - **AI Actions:** additional metadata about AI-action invocations
-    (e.g. provider, action data) that is not visible from the HTTP layer
-    alone.
-  - **Bulk Actions:** the full set of entity IDs touched by a bulk
-    operation. This complements the [bulk-operations limitation](#known-limitations)
-    on `API Activity` events, which today capture at most one entity per
-    bulk request.
-- **Correlation to the originating request:** the enrichment event carries
-  the same `metadata.correlation_uid` as the `API Activity` event it
-  augments. Consumers can join the two on `correlation_uid` to attach the
-  enrichment data to the originating call.
-- **Distinguishing it on read:** dispatch on `class_uid` or `class_name`.
-  `6003` / `"API Activity"` is the main audit event; `6001` /
-  `"Web Resources Activity"` is the experimental enrichment event. Both
-  classes share `metadata.tenant_uid` (your organization ID) and the same
-  partition layout on disk.
-- **Actor location differs by event class.** On `API Activity` (6003)
-  events, the actor is at the top-level `actor` field. On
-  `Web Resources Activity` (6001) enrichment events, OCSF 1.3.0 does not
-  define an `actor` attribute (see the
-  [class schema](https://schema.ocsf.io/1.3.0/classes/web_resources_activity)),
-  so we place it under `unmapped.actor` instead. Parsing logic that reads
-  the actor must handle both locations.
+- **Bulk Actions** (`type: "BulkActionEnrichment"`): the operation performed and
+  the full set of entities it addressed, which `resources[]` does not list
+  individually.
+- **AI Actions** (`type: "AiActionEnrichment"`): the invocation, the AI action
+  and entry involved, and the model that served it.
 
-> [!NOTE]
-> **You can filter or drop enrichment events at parse time** by matching on
-> `class_name == "Web Resources Activity"` (or equivalently
-> `class_uid == 6001`). If you only want the main audit-event contract for
-> now, add a filter in your parser to skip these and revisit when the
-> contract stabilises.
+`enrichments` appears only on requests that produce this data, so most events do
+not carry it. Where a request does produce it, expect the array on the event.
+Delivery is best-effort like the rest of the feed, so treat a missing
+`enrichments` array as inconclusive rather than as evidence that no bulk or AI
+action took place.
 
-Because this path is still evolving, expect:
+### Entry shape
 
-- Field names under `web_resources[].data` (e.g. `type`, `type_version`,
-  `provider`, `action`, `entities`, `created_time`) to potentially be
-  renamed or restructured.
-- Enrichments might show up within the API Activity event at some phase (as detailed below)
+Each element of `enrichments[]` describes one enrichment record.
 
-### Sample enrichment event
+| Field | Meaning |
+|---|---|
+| `name` | Constant `"resources"`, the OCSF attribute the enrichment data pertains to. |
+| `value` | Constant `"N/A"`. OCSF requires the field, but this data supplements `resources` as a whole rather than annotating one existing element of it. |
+| `type` | The kind of enrichment: `BulkActionEnrichment` or `AiActionEnrichment`. Dispatch on this to decide how to read `data.payload`. |
+| `provider` | `<request_id>/enrichment/<enrichment_id>`, identifying the source record. The request ID is the same value as `metadata.correlation_uid`. |
+| `created_time` | Epoch milliseconds, when the enrichment record was created. Shortly after the event's own `time`, so the two are not identical. |
+| `data.type_version` | Version of the `data.payload` contract for this `type`. |
+| `data.created_time` | The same instant as `created_time`, as an RFC-3339 string. |
+| `data.payload` | The enrichment content itself: an array whose shape depends on `type`. |
 
-A Bulk Action enrichment correlated to a `POST /spaces/.../bulk_actions/validate`
-API Activity event by `metadata.correlation_uid`:
+There is one entry per enrichment record, so a single request can produce
+several, including entries of different `type`s. Read `data.payload` according to
+`type` and `data.type_version`. Both the set of enrichment types and the fields
+within `data.payload` may grow over time, so ignore payload fields you do not
+recognise rather than rejecting the entry.
+
+### Bulk Actions
+
+`data.payload` is an array of `{action, entities}` objects. `action` is the bulk
+operation, such as `publish`, `unpublish`, `validate` or `duplicate`, and
+`entities` lists the addressed items as Contentful link objects. A bulk-action
+request in full:
 
 ```json
 {
-  "class_uid": 6001,
   "activity_id": 1,
   "activity_name": "Create",
-  "class_name": "Web Resources Activity",
+  "class_uid": 6003,
+  "class_name": "API Activity",
   "category_uid": 6,
-  "type_uid": 600101,
+  "type_uid": 600301,
   "severity_id": 1,
-  "status_id": 0,
-  "time": 1742567250576,
+  "status_id": 1,
+  "time": 1779969612000,
+  "duration": 3,
+  "actor": {
+    "user": {
+      "uid": "5xUser1234abcd",
+      "type": "User",
+      "type_id": 1,
+      "email_addr": "jane.doe@example.com",
+      "full_name": "Jane Doe"
+    }
+  },
   "metadata": {
     "version": "1.3.0",
-    "uid": "333ab88c-fd5e-49bb-9f66-c78d4f9cf11e",
-    "correlation_uid": "666aa5aa-45b4-4a11-a08c-c1e9f2a472af",
-    "tenant_uid": "9pZnXrhl2Z8TxyuLODXxKH",
+    "uid": "4b7d0e21-9c3f-4a58-8d16-7e2fb0a91c53",
+    "correlation_uid": "1f8c3a9d-52b4-4e07-9a6d-c31b8e45f207",
+    "tenant_uid": "0XYZ123orgabc",
     "log_name": "cma-api-audit-log",
     "product": {
       "name": "Content Management API",
       "vendor_name": "Contentful"
     }
   },
-  "unmapped": {
-    "actor": {
-      "user": {
-        "uid": "5xUser1234abcd",
-        "type": "User",
-        "type_id": 1,
-        "email_addr": "jane.doe@example.com",
-        "full_name": "Jane Doe"
-      }
-    }
-  },
-  "web_resources": [
+  "enrichments": [
     {
-      "uid": "c907a09a-c473-412e-aa85-f688c7f639dd",
-      "name": "BulkActionEnrichment",
+      "name": "resources",
+      "value": "N/A",
+      "type": "BulkActionEnrichment",
+      "provider": "1f8c3a9d-52b4-4e07-9a6d-c31b8e45f207/enrichment/6d41a0b8-3e57-4c92-b8f1-2a9e07c5d431",
+      "created_time": 1779969612480,
       "data": {
-        "type": "BulkActionEnrichment",
         "type_version": "1.0.0",
-        "provider": "666aa5aa-45b4-4a11-a08c-c1e9f2a472af/enrichment/c907a09a-c473-412e-aa85-f688c7f639dd",
-        "created_time": "2026-06-25T06:00:50.576Z",
-        "action": "validate",
-        "entities": [
-          { "sys": { "type": "Link", "linkType": "Asset", "id": "4xQRm9JXabcMNpL3k2qpBN" } },
-          { "sys": { "type": "Link", "linkType": "Entry", "id": "2DZbgdJotvvshpFnnXLZtb" } },
-          { "sys": { "type": "Link", "linkType": "Entry", "id": "2A4YqxSczTdhlX3SSZgpqg" } },
-          { "sys": { "type": "Link", "linkType": "Entry", "id": "7fCVLCDShH7E4eJz6gt6uY" } },
-          { "sys": { "type": "Link", "linkType": "Entry", "id": "3LsxOg93KRFeVdhHLGhUdI" } }
+        "created_time": "2026-05-28T12:00:12.480Z",
+        "payload": [
+          {
+            "action": "validate",
+            "entities": [
+              { "sys": { "type": "Link", "linkType": "Entry", "id": "entry42xyz" } },
+              { "sys": { "type": "Link", "linkType": "Entry", "id": "entry77abc" } }
+            ]
+          }
         ]
       }
     }
-  ]
+  ],
+  "api": {
+    "operation": "/spaces/:spaceId/environments/:environmentId/bulk_actions/validate"
+  },
+  "resources": [
+    { "uid": "abc123space", "type": "space" },
+    { "uid": "staging", "type": "environment" },
+    { "uid": "bulk42action9x", "type": "entity" }
+  ],
+  "http_request": {
+    "uid": "1f8c3a9d-52b4-4e07-9a6d-c31b8e45f207",
+    "http_method": "POST",
+    "referrer": "",
+    "user_agent": "axios/1.7.2",
+    "url": {
+      "hostname": "api.contentful.com",
+      "path": "/spaces/abc123space/environments/staging/bulk_actions/validate",
+      "query_string": ""
+    },
+    "http_headers": [
+      { "name": "x-contentful-user-agent", "value": "sdk contentful-management.js/11.2.0; platform node.js/v20.10.0; os Linux/v5.15;" },
+      { "name": "authorization", "value": "CFPA[REDACTED]x7Qz" }
+    ]
+  },
+  "http_response": {
+    "code": 201,
+    "length": 663,
+    "latency": 3,
+    "http_headers": [
+      { "name": "x-cache", "value": "PASS" }
+    ]
+  }
 }
 ```
 
-To attach this enrichment to its originating request, look up the
-`API Activity` event with the same `metadata.correlation_uid`
-(`666aa5aa-45b4-4a11-a08c-c1e9f2a472af` in this example).
+Note that `resources[]` identifies the bulk action itself, not the entries it
+addressed. Those are in `enrichments[].data.payload[].entities[]`.
 
-> [!NOTE]
-> **Possible future change:** we are evaluating folding the enrichment
-> payload directly into the originating `API Activity` event (likely under
-> OCSF's `enrichments` field) instead of emitting a separate
-> `Web Resources Activity` event correlated by `correlation_uid`. If we
-> make that change, the two-event model documented here would be replaced
-> by a single, self-contained `API Activity` event. Based on the outcomes
-> of the current prototype, this will be evaluated for adoption in the
-> final general availability version.
+### AI Actions
+
+`data.payload` is an array of invocations, each recording the AI action invoked,
+the entry and field affected, and the model that served the request. The
+`enrichments` entry, on an event otherwise shaped like the one above:
+
+```json
+{
+  "name": "resources",
+  "value": "N/A",
+  "type": "AiActionEnrichment",
+  "provider": "8a2e5f14-7b93-4d60-a1c8-5e07b9d3f462/enrichment/c05f9b73-1d24-42a8-9e36-7f18ca40b5de",
+  "created_time": 1779970104250,
+  "data": {
+    "type_version": "1.1",
+    "created_time": "2026-05-28T12:08:24.250Z",
+    "payload": [
+      {
+        "invocationId": "5wQ2mNbT8kRfPzL3vYcH1s",
+        "aiActionId": { "sys": { "type": "Link", "linkType": "AiAction", "id": "2pKdR7nMxQwJ4tBvZs9Lqe", "version": 5 } },
+        "createdBy": { "sys": { "type": "Link", "linkType": "User", "id": "5xUser1234abcd" } },
+        "entryAffected": {
+          "entityId": "entry42xyz",
+          "entityType": "Entry",
+          "fieldId": "productDescription",
+          "sourceLocale": "en-US"
+        },
+        "modelName": "anthropic.claude-4-5-sonnet",
+        "modelProvider": "aws_bedrock",
+        "modelTemperature": 0.1,
+        "outputFormat": "Suggestion"
+      }
+    ]
+  }
+}
+```
 
 ## Differences vs. the Daily Audit Log batch export
 
@@ -422,9 +478,9 @@ document.
 | `metadata.correlation_uid` | not set | the originating `request_id` (also `http_request.uid`) |
 
 The move from `Web Resources Activity` to `API Activity` reflects what the
-event actually represents (a Contentful Management API request) and lets us
-reserve `Web Resources Activity` for [enrichment events](#experimental-enrichment-events)
-that describe touched resources separately (like in case of bulk actions).
+event actually represents: a Contentful Management API request. Context that the
+batch export carried alongside it, such as bulk-action details, is delivered on
+the same event under [`enrichments[]`](#enrichments).
 
 ### `time`
 
@@ -455,31 +511,49 @@ Audit logs are an event stream, not a security signal. See
 | | Daily batch export | NRAL |
 |---|---|---|
 | Deprecated `actor.id` / `actor.type` | present (kept for backwards compatibility) | **not emitted** (these fields are deprecated in OCSF; use `actor.user.uid` / `actor.user.type`) |
-| `actor.user` for human users | `{type: "User", type_id: 2, uid, email_addr, full_name}` (identifier **and** full profile) | `{type: "User", type_id: 1, uid, email_addr, full_name}` (email and full name populated when available; `type_id` differs from batch export's `2`) |
-| Apps | `actor.user = {type: "App", type_id: 3, uid}` | `actor.app_uid = "<id>"` (no `actor.user`) |
-| Delegated actor (app on behalf of user) | not represented | `actor.invoked_by = "app:<id>"` |
-| Anonymous / unauthenticated | actor object with `type: "Unknown"` | `actor` object **omitted entirely** |
+| `actor.user` for human users | `uid`, `type: "User"`, `type_id: 2`, plus `email_addr` and `full_name` | `uid`, `type: "User"`, `type_id: 1`, plus `email_addr` and `full_name`. Note the `type_id` difference from the batch export's `2` |
+| Apps | on `actor.user`, as `uid`, `type: "App"`, `type_id: 3` | on `actor.app_uid`, holding the app ID. No `actor.user` |
+| Delegated actor (app on behalf of user) | not represented | on `actor.invoked_by`, always an `app:<id>` value |
+| Anonymous / unauthenticated | an `actor` object with `type: "Unknown"` | `actor` omitted entirely |
 
 NRAL identifies actors by ID (`actor.user.uid` for users, `actor.app_uid`
 for apps) and, when applicable, the delegated actor (`actor.invoked_by`).
-For human users, `email_addr` and `full_name` are also populated from
-Contentful's users directory, matching the batch export's profile
-information. Note the `type_id` mismatch: NRAL uses OCSF's canonical
-`type_id = 1` for `"User"`; the batch export historically emits `2`.
+For human users, `email_addr` and `full_name` are populated as well, matching
+the batch export's profile information. Note the `type_id` mismatch: NRAL uses
+OCSF's canonical `type_id = 1` for `"User"`; the batch export historically
+emits `2`.
 
 ### `enrichments` and `web_resources`
 
 | | Daily batch export | NRAL |
 |---|---|---|
-| `enrichments[]` on the main event | yes (synthetic entries derived from `http_request.url.path`, plus AI/Bulk action payloads) | **not populated on the `API Activity` event today** |
+| `enrichments[]` on the main event | a catch-all: URL-path entities, the delegated actor, the redacted token, **and** AI/Bulk action payloads | **AI/Bulk action payloads only.** The other three are now first-class OCSF fields: URL-path entities in `resources[]`, delegated actor in `actor.invoked_by`, redacted token in `http_request.http_headers[]` |
 | `web_resources[]` on the main event | yes, `[{type: "<NounName>", uid: "<id>"}]` (e.g. `BulkAction`, `Entry`) | **not populated**; see `resources[]` instead |
 | Acted-on resources on the main event | `web_resources[]` with the specific CMA noun (e.g. `BulkAction`, `Entry`, `Tag`) | `resources[]` with coarse types only: `space`, `environment`, `entity` |
-| AI Actions / Bulk Actions extra data | inline in the same event's `enrichments[]` | emitted as a **separate experimental `Web Resources Activity` event** (`class_uid = 6001`), joinable on `metadata.correlation_uid`. See [Experimental: enrichment events](#experimental-enrichment-events). |
+| AI Actions / Bulk Actions extra data | inline in the same event's `enrichments[]` | inline in the same event's `enrichments[]`. See [Enrichments](#enrichments) |
 
 The coarsening to `space`/`environment`/`entity` is intentional. The CMA
 exposes dozens of resource nouns that change over time, and tying the OCSF
 contract to that surface forced schema churn on every CMA addition. If you
 need the specific noun, parse it from `http_request.url.path`.
+
+AI and Bulk action entries stay in `enrichments[]`, and the entry itself is close
+to the batch shape. What moved:
+
+| Field | Daily batch export | NRAL |
+|---|---|---|
+| `name` | `"web_resources"` | `"resources"`: `web_resources` is not an attribute of `API Activity`, and `resources` is its counterpart |
+| `value` | `"N/A"` | unchanged |
+| `type` | the enrichment kind | unchanged |
+| `provider` | `<request_id>/enrichment/<enrichment_id>` | unchanged |
+| `created_time` | RFC-3339 string, at entry level | epoch milliseconds at entry level, per OCSF `Timestamp_t`. The string form remains at `data.created_time` |
+| `type_version` | at entry level | `data.type_version`: not an OCSF attribute, so it moves inside `data` |
+| the payload array | `data` **is** the array | `data.payload` is the array; `data` is now an object holding it plus its version |
+
+So a batch consumer reading `enrichment.data[0].entities` reads
+`enrichment.data.payload[0].entities` in NRAL, and one reading
+`enrichment.created_time` as a string gets a number. Those two are the only
+breaking changes in the entry.
 
 ### `activity_id` semantics
 
@@ -565,16 +639,12 @@ the NRAL configuration for the destinations you want.
 
 ## Known limitations
 
-- **Bulk operations capture at most one entity on the `API Activity` event.**
+- **`resources[]` does not list the entities a bulk operation addressed.**
   CMA endpoints such as `bulk_actions` and batch publish operate on many
-  entries in a single HTTP request, but the `API Activity` event currently
-  surfaces only a single `entity_id` (or none) in `resources[]`. The full
-  set of touched entities is being delivered via a separate
-  [enrichment event](#experimental-enrichment-events) (experimental);
-  correlate on `metadata.correlation_uid` to attach the bulk-action
-  details to the originating request.
-- **CMA-only at launch.** The early-release feed covers the Contentful
-  Management API only.
+  entries in a single HTTP request. `resources[]` identifies the space, the
+  environment, and the bulk action itself, not the individual entries. The full
+  set is delivered on the same event under `enrichments[]`; see
+  [Enrichments](#enrichments).
 - **Some `api.operation` values may be empty.** When upstream routing does
   not set a route template, the entire `api` object is dropped from the
   event. Affected endpoints are being closed out during the early-release
