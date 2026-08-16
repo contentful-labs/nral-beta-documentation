@@ -285,7 +285,7 @@ Each element of `enrichments[]` describes one enrichment record.
 | `provider` | `<request_id>/enrichment/<enrichment_id>`, identifying the source record. The request ID is the same value as `metadata.correlation_uid`. |
 | `created_time` | Epoch milliseconds, when the enrichment record was created. Shortly after the event's own `time`, so the two are not identical. |
 | `data.type_version` | Version of the `data.payload` contract for this `type`. |
-| `data.created_time` | The same instant as `created_time`, as an RFC-3339 string. |
+| `data.created_time` | The same instant as `created_time`, as epoch milliseconds. |
 | `data.payload` | The enrichment content itself: an array whose shape depends on `type`. |
 
 There is one entry per enrichment record, so a single request can produce
@@ -342,7 +342,7 @@ request in full:
       "created_time": 1779969612480,
       "data": {
         "type_version": "1.0.0",
-        "created_time": "2026-05-28T12:00:12.480Z",
+        "created_time": 1779969612480,
         "payload": [
           {
             "action": "validate",
@@ -407,7 +407,7 @@ the entry and field affected, and the model that served the request. The
   "created_time": 1779970104250,
   "data": {
     "type_version": "1.1",
-    "created_time": "2026-05-28T12:08:24.250Z",
+    "created_time": 1779970104250,
     "payload": [
       {
         "invocationId": "5wQ2mNbT8kRfPzL3vYcH1s",
@@ -546,14 +546,15 @@ to the batch shape. What moved:
 | `value` | `"N/A"` | unchanged |
 | `type` | the enrichment kind | unchanged |
 | `provider` | `<request_id>/enrichment/<enrichment_id>` | unchanged |
-| `created_time` | RFC-3339 string, at entry level | epoch milliseconds at entry level, per OCSF `Timestamp_t`. The string form remains at `data.created_time` |
+| `created_time` | RFC-3339 string, at entry level | epoch milliseconds at entry level, per OCSF `Timestamp_t`. `data.created_time` is now epoch milliseconds too, the same instant |
 | `type_version` | at entry level | `data.type_version`: not an OCSF attribute, so it moves inside `data` |
 | the payload array | `data` **is** the array | `data.payload` is the array; `data` is now an object holding it plus its version |
 
 So a batch consumer reading `enrichment.data[0].entities` reads
-`enrichment.data.payload[0].entities` in NRAL, and one reading
-`enrichment.created_time` as a string gets a number. Those two are the only
-breaking changes in the entry.
+`enrichment.data.payload[0].entities` in NRAL, one reading
+`enrichment.created_time` as a string gets a number, and one reading
+`enrichment.data.created_time` as a string also gets a number. Those three are
+the only breaking changes in the entry.
 
 ### `activity_id` semantics
 
